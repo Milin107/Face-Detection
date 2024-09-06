@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Head, Yawn, and Camera Blockage Detection</title>
+    <style>
+        body { text-align: center; }
+        video, canvas { display: block; margin: auto; }
+        #warning { color: red; font-size: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Head, Yawn, and Camera Blockage Detection</h1>
+    <video id="video" width="640" height="480" autoplay></video>
+    <canvas id="overlay" width="640" height="480"></canvas>
+    <p id="warning"></p>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection"></script>
+    
+    <script>
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const ctx = overlay.getContext('2d');
+        const warning = document.getElementById('warning');
+        let blocked = false;  // To track if the camera is blocked
+        let yawnDetected = false;
+        let headDownDetected = false;
+
+        // Function to initialize the video stream
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                return new Promise(resolve => {
+                    video.onloadedmetadata = () => { resolve(video); };
+                });
+            } catch (error) {
+                warning.textContent = "Error accessing the camera!";
+                throw error;
+            }
+        }
+
+        // Function to run face landmark detection
+        async function runDetection() {
+            const model = await faceLandmarksDetection.load(
+                faceLandmarksDetection.SupportedPackages.mediapipeFacemesh
+            );
+
+            async function detect() {
+                const predictions = await model.estimateFaces({
+                    input: video,
+                    returnTensors: false,
+                    flipHorizontal: false
+                });
+
+                ctx.clearRect(0, 0, overlay.width, overlay.height); // Clear previous frame
+
+                if (predictions.length > 0) {
+                    blocked = false;  // Reset blocked state if faces are detected
+                    warning.textContent = "";  // Clear warning
+
+                    predictions.forEach(prediction => {
+                        const keypoints = prediction.scaledMesh;
+
+                        // Get key points for the bounding box and face analysis
+                        const startX = keypoints[234][0];
+                        const startY = keypoints[10][1];
+                        const endX = keypoints[454][0];
+                        const endY = keypoints[152][1];
+
+                        // Draw a box around the face
+                        ctx.strokeStyle = "red";
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(startX, startY, endX - startX, endY - startY);
+
+                        // Head down detection logic based on bounding box center
+                        const headDownThreshold = 320;
+                        if ((startY + endY) / 2 > headDownThreshold) {
+                            if (!headDownDetected) {
+                                warning.textContent = "Head down detected!";
+                                headDownDetected = true;
+                            }
+                        } else {
+                            headDownDetected = false;
+                        }
+
+                        // Yawn detection logic
+                        const upperLip = keypoints[13];
+                        const lowerLip = keypoints[14];
+                        const mouthHeight = Math.abs(upperLip[1] - lowerLip[1]);
+                        const mouthWidth = Math.abs(keypoints[61][0] - keypoints[291][0]);
+
+                        const yawnThreshold = 0.5; // Adjust based on real-world tests
+                        if (mouthHeight / mouthWidth > yawnThreshold) {
+                            if (!yawnDetected) {
+                                warning.textContent = "Yawn detected!";
+                                yawnDetected = true;
+                            }
+                        } else {
+                            yawnDetected = false;
+                        }
+                    });
+                } else {
+                    if (!blocked) {
+                        blocked = true;
+                        warning.textContent = "Camera blocked or no face detected!";
+                    }
+                }
+
+                // Run detection every 200ms to save CPU
+                setTimeout(detect, 200);
+            }
+
+            detect();
+        }
+
+        // Start the camera and detection
+        setupCamera().then(runDetection).catch(err => console.error(err));
+    </script>
+</body>
+</html>
